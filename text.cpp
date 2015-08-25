@@ -18,13 +18,31 @@ extern unsigned char fontbits[];
 unsigned char *screen;
 int screen_cursor_x;
 int screen_cursor_y;
+unsigned char *screen_cursor_ptr;
 unsigned char *screen_textport_start_address;
+
+void screen_set_cursor(int x, int y)
+{
+    if(y < 0) {
+        x = 0; y = 0;
+    } else if(y >= screen_textport_rows) {
+        x = screen_textport_columns - 1;
+        y = screen_textport_rows - 1;
+    } else if(x < 0) {
+        x = 0;
+    } else if(x >= screen_textport_columns) {
+        x = screen_textport_columns - 1;
+    }
+    screen_cursor_x = x;
+    screen_cursor_y = y;
+    screen_cursor_ptr = screen_textport_start_address + x + y * screen_width_bytes;
+}
 
 void screen_init()
 {
     screen = new unsigned char[screen_byte_count];
     screen_textport_start_address = screen + screen_top_margin * screen_width_bytes + screen_left_margin_bytes;
-    screen_cursor_x = screen_cursor_y = 0;
+    screen_set_cursor(0, 0);
 }
 
 void screen_clear()
@@ -37,20 +55,11 @@ void screen_clear()
 int text_flag_none = 0x00;
 int text_flag_inverse = 0x01;
 
-void screen_drawchar(int x, int y, unsigned char c, int flags)
+void screen_drawchar(unsigned char c, int flags)
 {
-    if(x < 0)
-        return;
-    if(x >= screen_textport_columns)
-        return;
-    if(y < 0)
-        return;
-    if(y >= screen_textport_rows)
-        return;
-
-    int start_byte = screen_left_margin_bytes + x + (screen_top_margin + y * fontheight) * screen_width_bytes;
-    unsigned char *screen_ptr = screen + start_byte;
+    unsigned char *screen_ptr = screen_cursor_ptr;
     unsigned char *font_ptr = fontbits + fontheight * c;
+
     if(flags & text_flag_inverse) {
         for(int i = fontheight; i != 0; i--) {
             *screen_ptr = *font_ptr ^ 0xff;
@@ -66,22 +75,26 @@ void screen_drawchar(int x, int y, unsigned char c, int flags)
     }
 }
 
-void screen_invertchar(int x, int y)
+void screen_invert_at_cursor()
 {
-    if(x < 0)
-        return;
-    if(x >= screen_textport_columns)
-        return;
-    if(y < 0)
-        return;
-    if(y >= screen_textport_rows)
-        return;
-
-    int start_byte = screen_left_margin_bytes + x + (screen_top_margin + y * fontheight) * screen_width_bytes;
-    unsigned char *screen_ptr = screen + start_byte;
+    unsigned char *screen_ptr = screen_cursor_ptr;
     for(int i = fontheight; i != 0; i--) {
         *screen_ptr = *screen_ptr ^ 0xff;
         screen_ptr += screen_width_bytes;
+    }
+}
+
+void screen_increment_cursor()
+{
+    screen_cursor_x ++;
+    screen_cursor_ptr ++;
+    if(screen_cursor_x >= screen_textport_columns) {
+        screen_cursor_x = 0;
+        screen_cursor_y++;
+        screen_cursor_ptr += screen_width_bytes * fontheight - screen_textport_columns;
+    }
+    if(screen_cursor_y >= screen_textport_rows) {
+        /* scroll */
     }
 }
 
@@ -91,12 +104,6 @@ void screen_print_char(unsigned char c)
 
 void screen_print_string(unsigned char *str)
 {
-}
-
-void screen_set_cursor(int x, int y)
-{
-    screen_cursor_x = x;
-    screen_cursor_y = y;
 }
 
 int main(int argc, char **argv)
@@ -109,24 +116,27 @@ int main(int argc, char **argv)
         int y = cursor / screen_textport_columns;
         int x = cursor - y * screen_textport_columns;
         fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
-        screen_drawchar(x, y, c, text_flag_none);
+        screen_drawchar(c, text_flag_none);
         if(c % 0x08 == 0)
-            screen_invertchar(x, y);
+            screen_invert_at_cursor();
+        screen_increment_cursor();
         cursor++;
     }
     for(int c = 0x20; c <= 0x7e; c++) {
         int y = cursor / screen_textport_columns;
         int x = cursor - y * screen_textport_columns;
         fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
-        screen_drawchar(x, y, c, text_flag_inverse);
+        screen_drawchar(c, text_flag_inverse);
         if(c % 0x08 == 0)
-            screen_invertchar(x, y);
+            screen_invert_at_cursor();
+        screen_increment_cursor();
         cursor++;
     }
 
     int y = cursor / screen_textport_columns;
     int x = cursor - y * screen_textport_columns;
     screen_set_cursor(x, y);
+    /* ... */
 
     printf("P4 %d %d\n", screen_width, screen_height);
     fwrite(screen, 1, screen_byte_count, stdout);
