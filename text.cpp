@@ -1,6 +1,9 @@
 #include <cstdio>
+#include <rfb/rfb.h>
+#undef max
+#include <rfb/keysym.h>
 
-int screen_width_bytes = 62;
+int screen_width_bytes = 22; // 62;
 int screen_height = 262;
 int screen_byte_count = screen_width_bytes * screen_height;
 int screen_width = screen_width_bytes * 8;
@@ -14,6 +17,40 @@ int screen_textport_rows = screen_height - screen_top_margin - screen_bottom_mar
 
 extern int fontwidth, fontheight;
 extern unsigned char fontbits[];
+
+rfbScreenInfoPtr rfb_server;
+int video_rfb_scale_x = 3;
+int video_rfb_scale_y = 2;
+bool quit;
+
+uint32_t rfb_pixel(int  r, int g, int b)
+{
+    return (r << 16) | (g << 8) | (b);
+}
+
+void set_video_pixel_in_rfb(int video_x, int video_y, bool set)
+{
+    int rfb_x = video_x * video_rfb_scale_x;
+    int rfb_y = video_y * video_rfb_scale_y;
+    int v = set ? 255 : 0;
+
+    for(int j = 0; j < video_rfb_scale_y; j++)
+        for(int i = 0; i < video_rfb_scale_x; i++) {
+            rfbDrawPixel(rfb_server, rfb_x + i, rfb_y + j, rfb_pixel(v, v, v));
+        }
+}
+
+void update_rfb_from_screen_byte(int addr, unsigned char data)
+{
+    int pixel_start = addr * 8;
+    int pixel_row = pixel_start / screen_width;
+    if(pixel_row < screen_height) {
+        int pixel_column_start = pixel_start - (pixel_row * screen_width);
+        for(int i = 0; i < 8; i++) {
+            set_video_pixel_in_rfb(pixel_column_start + i, pixel_row, data & (0x80 >> i));
+        }
+    }
+}
 
 unsigned char *screen;
 int screen_cursor_x;
@@ -63,12 +100,14 @@ void screen_drawchar(unsigned char c, int flags)
     if(flags & text_flag_inverse) {
         for(int i = fontheight; i != 0; i--) {
             *screen_ptr = *font_ptr ^ 0xff;
+            update_rfb_from_screen_byte(screen_ptr - screen, *screen_ptr);
             font_ptr++;
             screen_ptr += screen_width_bytes;
         }
     } else {
         for(int i = fontheight; i != 0; i--) {
             *screen_ptr = *font_ptr;
+            update_rfb_from_screen_byte(screen_ptr - screen, *screen_ptr);
             font_ptr++;
             screen_ptr += screen_width_bytes;
         }
@@ -80,6 +119,7 @@ void screen_invert_at_cursor()
     unsigned char *screen_ptr = screen_cursor_ptr;
     for(int i = fontheight; i != 0; i--) {
         *screen_ptr = *screen_ptr ^ 0xff;
+        update_rfb_from_screen_byte(screen_ptr - screen, *screen_ptr);
         screen_ptr += screen_width_bytes;
     }
 }
@@ -106,8 +146,41 @@ void screen_print_string(unsigned char *str)
 {
 }
 
+void handleKey(rfbBool down, rfbKeySym key, rfbClientPtr cl)
+{
+    if(down) {
+        if(key==XK_Escape) {
+            rfbCloseClient(cl);
+            quit = true;
+        } else if(key==XK_F12) {
+            /* close down server, disconnecting clients */
+            rfbShutdownServer(cl->screen,TRUE);
+            quit = true;
+        } else if(key==XK_F11) {
+            /* close down server, but wait for all clients to disconnect */
+            rfbShutdownServer(cl->screen,FALSE);
+            quit = true;
+        } else if(key==XK_F11) {
+            /* close down server, but wait for all clients to disconnect */
+            rfbShutdownServer(cl->screen,FALSE);
+            quit = true;
+        } else if(key >= ' ' && key <= '~') {
+            screen_drawchar(key, text_flag_none);
+            screen_increment_cursor();
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
+    int rfbargc = 0;
+    char **rgbargv = 0;
+    rfb_server = rfbGetScreen(&argc,argv,screen_width * video_rfb_scale_x,screen_height * video_rfb_scale_y,8,3,4);
+    unsigned char* rfb_bytes = new unsigned char[screen_width * video_rfb_scale_x * screen_height * video_rfb_scale_y * 4];
+    rfb_server->frameBuffer = (char *)rfb_bytes;
+    rfb_server->kbdAddEvent = handleKey;
+    rfbInitServer(rfb_server);
+
     screen_init();
     screen_clear();
 
@@ -133,13 +206,21 @@ int main(int argc, char **argv)
         cursor++;
     }
 
-    int y = cursor / screen_textport_columns;
-    int x = cursor - y * screen_textport_columns;
-    screen_set_cursor(x, y);
-    /* ... */
+    if(false) {
+        int y = cursor / screen_textport_columns;
+        int x = cursor - y * screen_textport_columns;
+        screen_set_cursor(x, y);
+        /* ... */
+    }
 
-    printf("P4 %d %d\n", screen_width, screen_height);
-    fwrite(screen, 1, screen_byte_count, stdout);
+    if(false) {
+        printf("P4 %d %d\n", screen_width, screen_height);
+        fwrite(screen, 1, screen_byte_count, stdout);
+    }
+
+    while(!quit) {
+        rfbProcessEvents(rfb_server, 1000);
+    }
 }
 
 #if 0
