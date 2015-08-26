@@ -3,23 +3,29 @@
 #undef max
 #include <rfb/keysym.h>
 
-int screen_width_bytes = 22; // 62;
+extern int fontwidth, fontheight;
+extern unsigned char fontbits[];
+
+int screen_width_bytes = 62; // 31;
 int screen_height = 262;
 int screen_byte_count = screen_width_bytes * screen_height;
 int screen_width = screen_width_bytes * 8;
-int screen_left_margin_bytes = 2;
-int screen_right_margin_bytes = 1;
+int screen_left_margin_bytes = 3;
+int screen_right_margin_bytes = 2;
 int screen_top_margin = 5;
 int screen_bottom_margin = 5;
 
 int screen_textport_columns = screen_width_bytes - screen_left_margin_bytes - screen_right_margin_bytes;
-int screen_textport_rows = screen_height - screen_top_margin - screen_bottom_margin;
+int screen_textport_rows = (screen_height - screen_top_margin - screen_bottom_margin) / fontheight;
 
-extern int fontwidth, fontheight;
-extern unsigned char fontbits[];
+unsigned char *screen;
+int screen_cursor_x;
+int screen_cursor_y;
+unsigned char *screen_cursor_ptr;
+unsigned char *screen_textport_start_address;
 
 rfbScreenInfoPtr rfb_server;
-int video_rfb_scale_x = 3;
+int video_rfb_scale_x = 1;
 int video_rfb_scale_y = 2;
 bool quit;
 
@@ -28,7 +34,7 @@ uint32_t rfb_pixel(int  r, int g, int b)
     return (r << 16) | (g << 8) | (b);
 }
 
-void set_video_pixel_in_rfb(int video_x, int video_y, bool set)
+void rfb_set_pixel_from_video(int video_x, int video_y, bool set)
 {
     int rfb_x = video_x * video_rfb_scale_x;
     int rfb_y = video_y * video_rfb_scale_y;
@@ -40,23 +46,45 @@ void set_video_pixel_in_rfb(int video_x, int video_y, bool set)
         }
 }
 
-void update_rfb_from_screen_byte(int addr, unsigned char data)
+void rfb_fill_from_video()
 {
+    for(int j = 0; j < screen_height; j++) {
+        for(int i = 0; i < screen_width_bytes; i++) {
+            for(int k = 0; k < 8; k++) {
+                int video_x = i * 8 + k;
+                int video_y = j;
+                int set = screen[j * screen_width_bytes + i] & (0x80 >> k);
+
+                int rfb_x = video_x * video_rfb_scale_x;
+                int rfb_y = video_y * video_rfb_scale_y;
+                int v = set ? 255 : 0;
+
+                for(int p = 0; p < video_rfb_scale_y; p++)
+                    for(int q = 0; q < video_rfb_scale_x; q++) {
+                        unsigned char *fb = (unsigned char *)rfb_server->frameBuffer + ((rfb_y + p) * rfb_server->width + rfb_x + q) * 4;
+                        fb[0] = v;
+                        fb[1] = v;
+                        fb[2] = v;
+                    }
+            }
+        }
+    }
+    rfbMarkRectAsModified(rfb_server, 0, 0, rfb_server->width, rfb_server->height);
+}
+
+void update_rfb_from_screen_byte(unsigned char* p)
+{
+    int addr = p - screen;
     int pixel_start = addr * 8;
     int pixel_row = pixel_start / screen_width;
+    unsigned char data = *p;
     if(pixel_row < screen_height) {
         int pixel_column_start = pixel_start - (pixel_row * screen_width);
         for(int i = 0; i < 8; i++) {
-            set_video_pixel_in_rfb(pixel_column_start + i, pixel_row, data & (0x80 >> i));
+            rfb_set_pixel_from_video(pixel_column_start + i, pixel_row, data & (0x80 >> i));
         }
     }
 }
-
-unsigned char *screen;
-int screen_cursor_x;
-int screen_cursor_y;
-unsigned char *screen_cursor_ptr;
-unsigned char *screen_textport_start_address;
 
 void screen_set_cursor(int x, int y)
 {
@@ -85,14 +113,16 @@ void screen_init()
 void screen_clear()
 {
     unsigned char *p = screen;
-    for(int i = screen_byte_count; i != 0; i--, p++)
+    for(int i = screen_byte_count; i != 0; i--, p++) {
         *p = 0;
+        update_rfb_from_screen_byte(p);
+    }
 }
 
 int text_flag_none = 0x00;
 int text_flag_inverse = 0x01;
 
-void screen_drawchar(unsigned char c, int flags)
+void screen_draw_char(unsigned char c, int flags)
 {
     unsigned char *screen_ptr = screen_cursor_ptr;
     unsigned char *font_ptr = fontbits + fontheight * c;
@@ -100,14 +130,14 @@ void screen_drawchar(unsigned char c, int flags)
     if(flags & text_flag_inverse) {
         for(int i = fontheight; i != 0; i--) {
             *screen_ptr = *font_ptr ^ 0xff;
-            update_rfb_from_screen_byte(screen_ptr - screen, *screen_ptr);
+            update_rfb_from_screen_byte(screen_ptr);
             font_ptr++;
             screen_ptr += screen_width_bytes;
         }
     } else {
         for(int i = fontheight; i != 0; i--) {
             *screen_ptr = *font_ptr;
-            update_rfb_from_screen_byte(screen_ptr - screen, *screen_ptr);
+            update_rfb_from_screen_byte(screen_ptr);
             font_ptr++;
             screen_ptr += screen_width_bytes;
         }
@@ -119,13 +149,43 @@ void screen_invert_at_cursor()
     unsigned char *screen_ptr = screen_cursor_ptr;
     for(int i = fontheight; i != 0; i--) {
         *screen_ptr = *screen_ptr ^ 0xff;
-        update_rfb_from_screen_byte(screen_ptr - screen, *screen_ptr);
+        update_rfb_from_screen_byte(screen_ptr);
         screen_ptr += screen_width_bytes;
     }
 }
 
-void screen_increment_cursor()
+void screen_scroll_one_row()
 {
+    unsigned char *screen_ptr = screen_textport_start_address;
+    unsigned char *next_row_ptr = screen_textport_start_address + screen_width_bytes * fontheight;
+    for(int i = (screen_textport_rows - 1) * screen_width_bytes * fontheight; i > 0; i--) {
+        *screen_ptr++ = *next_row_ptr++;
+    }
+    for(int i = screen_width_bytes * fontheight; i > 0; i--) {
+        *screen_ptr++ = 0;
+    }
+    rfb_fill_from_video();
+}
+
+void screen_rewind_cursor()
+{
+    if(screen_cursor_x == 0) {
+        if(screen_cursor_y == 0) {
+            return;
+        } else {
+            screen_cursor_x = screen_textport_columns - 1;
+            screen_cursor_y--;
+            screen_cursor_ptr = screen_cursor_ptr - fontheight * screen_width_bytes + screen_textport_columns - 1;
+        }
+    } else {
+        screen_cursor_x--;
+        screen_cursor_ptr--;
+    }
+}
+
+void screen_forward_cursor()
+{
+    // printf("%d, %d, %ld\n", screen_cursor_x, screen_cursor_y, screen_cursor_ptr - screen);
     screen_cursor_x ++;
     screen_cursor_ptr ++;
     if(screen_cursor_x >= screen_textport_columns) {
@@ -134,16 +194,54 @@ void screen_increment_cursor()
         screen_cursor_ptr += screen_width_bytes * fontheight - screen_textport_columns;
     }
     if(screen_cursor_y >= screen_textport_rows) {
-        /* scroll */
+        screen_scroll_one_row();
+        screen_cursor_y--;
+        screen_cursor_ptr -= screen_width_bytes * fontheight;
     }
+}
+
+void screen_cursor_newline()
+{
+    screen_cursor_y++;
+    screen_cursor_ptr += screen_width_bytes * fontheight;
+    if(screen_cursor_y >= screen_textport_rows) {
+        screen_scroll_one_row();
+        screen_cursor_y--;
+        screen_cursor_ptr -= screen_width_bytes * fontheight;
+    }
+}
+
+void screen_cursor_carriage_return()
+{
+    screen_cursor_ptr -= screen_cursor_x;
+    screen_cursor_x = 0;
 }
 
 void screen_print_char(unsigned char c)
 {
+    if(c == '\r') {
+        printf("cr\n");
+        screen_invert_at_cursor();
+        screen_cursor_carriage_return();
+        screen_invert_at_cursor();
+    } else if(c == '\n') {
+        printf("nl\n");
+        screen_invert_at_cursor();
+        screen_cursor_newline();
+        screen_invert_at_cursor();
+    } else {
+        screen_draw_char(c, text_flag_none);
+        screen_forward_cursor();
+        screen_draw_char(' ', text_flag_none);
+        screen_invert_at_cursor();
+    }
 }
 
 void screen_print_string(unsigned char *str)
 {
+    while(*str) {
+        screen_print_char(*str++);
+    }
 }
 
 void handleKey(rfbBool down, rfbKeySym key, rfbClientPtr cl)
@@ -165,9 +263,17 @@ void handleKey(rfbBool down, rfbKeySym key, rfbClientPtr cl)
             rfbShutdownServer(cl->screen,FALSE);
             quit = true;
         } else if(key >= ' ' && key <= '~') {
-            screen_drawchar(key, text_flag_none);
-            screen_increment_cursor();
-        }
+            screen_print_char(key);
+        } else if(key == XK_Return) {
+            screen_print_char('\r');
+            screen_print_char('\n');
+        } else if(key == XK_BackSpace || key == XK_Delete) {
+            screen_invert_at_cursor();
+            screen_rewind_cursor();
+            screen_draw_char(' ', text_flag_none);
+            screen_invert_at_cursor();
+        } else
+            printf("rfb key 0x%04X\n", key);
     }
 }
 
@@ -175,7 +281,7 @@ int main(int argc, char **argv)
 {
     int rfbargc = 0;
     char **rgbargv = 0;
-    rfb_server = rfbGetScreen(&argc,argv,screen_width * video_rfb_scale_x,screen_height * video_rfb_scale_y,8,3,4);
+    rfb_server = rfbGetScreen(&argc, argv, screen_width * video_rfb_scale_x, screen_height * video_rfb_scale_y, 8, 3, 4);
     unsigned char* rfb_bytes = new unsigned char[screen_width * video_rfb_scale_x * screen_height * video_rfb_scale_y * 4];
     rfb_server->frameBuffer = (char *)rfb_bytes;
     rfb_server->kbdAddEvent = handleKey;
@@ -185,25 +291,27 @@ int main(int argc, char **argv)
     screen_clear();
 
     int cursor = 0;
-    for(int c = 0x20; c <= 0x7e; c++) {
-        int y = cursor / screen_textport_columns;
-        int x = cursor - y * screen_textport_columns;
-        fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
-        screen_drawchar(c, text_flag_none);
-        if(c % 0x08 == 0)
-            screen_invert_at_cursor();
-        screen_increment_cursor();
-        cursor++;
-    }
-    for(int c = 0x20; c <= 0x7e; c++) {
-        int y = cursor / screen_textport_columns;
-        int x = cursor - y * screen_textport_columns;
-        fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
-        screen_drawchar(c, text_flag_inverse);
-        if(c % 0x08 == 0)
-            screen_invert_at_cursor();
-        screen_increment_cursor();
-        cursor++;
+    for(int i = 0; i < 2; i++) {
+        for(int c = 0x20; c <= 0x7e; c++) {
+            int y = cursor / screen_textport_columns;
+            int x = cursor - y * screen_textport_columns;
+            fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
+            screen_draw_char(c, text_flag_none);
+            if(c % 0x08 == 0)
+                screen_invert_at_cursor();
+            screen_forward_cursor();
+            cursor++;
+        }
+        for(int c = 0x20; c <= 0x7e; c++) {
+            int y = cursor / screen_textport_columns;
+            int x = cursor - y * screen_textport_columns;
+            fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
+            screen_draw_char(c, text_flag_inverse);
+            if(c % 0x08 == 0)
+                screen_invert_at_cursor();
+            screen_forward_cursor();
+            cursor++;
+        }
     }
 
     if(false) {
