@@ -1,4 +1,6 @@
 #include <cstdio>
+#include <fcntl.h>
+#include <errno.h>
 #include <rfb/rfb.h>
 #undef max
 #include <rfb/keysym.h>
@@ -220,14 +222,17 @@ void screen_cursor_carriage_return()
 void screen_print_char(unsigned char c)
 {
     if(c == '\r') {
-        printf("cr\n");
         screen_invert_at_cursor();
         screen_cursor_carriage_return();
         screen_invert_at_cursor();
     } else if(c == '\n') {
-        printf("nl\n");
         screen_invert_at_cursor();
         screen_cursor_newline();
+        screen_invert_at_cursor();
+    } else if(c == '' || c == '') {
+        screen_invert_at_cursor();
+        screen_rewind_cursor();
+        screen_draw_char(' ', text_flag_none);
         screen_invert_at_cursor();
     } else {
         screen_draw_char(c, text_flag_none);
@@ -243,6 +248,9 @@ void screen_print_string(unsigned char *str)
         screen_print_char(*str++);
     }
 }
+
+bool pass_key = false;
+int pipe_to_subprocess = -1;
 
 void handleKey(rfbBool down, rfbKeySym key, rfbClientPtr cl)
 {
@@ -263,19 +271,34 @@ void handleKey(rfbBool down, rfbKeySym key, rfbClientPtr cl)
             rfbShutdownServer(cl->screen,FALSE);
             quit = true;
         } else if(key >= ' ' && key <= '~') {
-            screen_print_char(key);
+            if(pass_key)
+                write(pipe_to_subprocess, &key, 1);
+            else
+                screen_print_char(key);
         } else if(key == XK_Return) {
-            screen_print_char('\r');
-            screen_print_char('\n');
+            if(pass_key) {
+                key = '\n';
+                write(pipe_to_subprocess, &key, 1);
+            } else {
+                screen_print_char('\r');
+                screen_print_char('\n');
+            }
         } else if(key == XK_BackSpace || key == XK_Delete) {
-            screen_invert_at_cursor();
-            screen_rewind_cursor();
-            screen_draw_char(' ', text_flag_none);
-            screen_invert_at_cursor();
+            if(pass_key) {
+                key = '';
+                write(pipe_to_subprocess, &key, 1);
+            } else {
+                screen_invert_at_cursor();
+                screen_rewind_cursor();
+                screen_draw_char(' ', text_flag_none);
+                screen_invert_at_cursor();
+            }
         } else
             printf("rfb key 0x%04X\n", key);
     }
 }
+
+bool test_with_subprocess = true;
 
 int main(int argc, char **argv)
 {
@@ -291,42 +314,72 @@ int main(int argc, char **argv)
     screen_clear();
 
     int cursor = 0;
-    for(int i = 0; i < 2; i++) {
-        for(int c = 0x20; c <= 0x7e; c++) {
-            int y = cursor / screen_textport_columns;
-            int x = cursor - y * screen_textport_columns;
-            fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
-            screen_draw_char(c, text_flag_none);
-            if(c % 0x08 == 0)
-                screen_invert_at_cursor();
-            screen_forward_cursor();
-            cursor++;
-        }
-        for(int c = 0x20; c <= 0x7e; c++) {
-            int y = cursor / screen_textport_columns;
-            int x = cursor - y * screen_textport_columns;
-            fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
-            screen_draw_char(c, text_flag_inverse);
-            if(c % 0x08 == 0)
-                screen_invert_at_cursor();
-            screen_forward_cursor();
-            cursor++;
+    if(false) {
+        // Selftest
+        for(int i = 0; i < 2; i++) {
+            for(int c = 0x20; c <= 0x7e; c++) {
+                int y = cursor / screen_textport_columns;
+                int x = cursor - y * screen_textport_columns;
+                fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
+                screen_draw_char(c, text_flag_none);
+                if(c % 0x08 == 0)
+                    screen_invert_at_cursor();
+                screen_forward_cursor();
+                cursor++;
+            }
+            for(int c = 0x20; c <= 0x7e; c++) {
+                int y = cursor / screen_textport_columns;
+                int x = cursor - y * screen_textport_columns;
+                fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
+                screen_draw_char(c, text_flag_inverse);
+                if(c % 0x08 == 0)
+                    screen_invert_at_cursor();
+                screen_forward_cursor();
+                cursor++;
+            }
         }
     }
 
-    if(false) {
-        int y = cursor / screen_textport_columns;
-        int x = cursor - y * screen_textport_columns;
-        screen_set_cursor(x, y);
-        /* ... */
-    }
+    int pipe_from_subprocess;
+    if(test_with_subprocess) {
+        int to_fds[2];
+        int from_fds[2];
+        int result = pipe(to_fds);
+        result = pipe(from_fds);
+        pipe_to_subprocess = to_fds[1];
+        pipe_from_subprocess = from_fds[0];
+        fcntl(pipe_from_subprocess, F_SETFL, O_NONBLOCK);
 
-    if(false) {
-        printf("P4 %d %d\n", screen_width, screen_height);
-        fwrite(screen, 1, screen_byte_count, stdout);
+        if(fork() == 0) {
+            if(dup2(to_fds[0], 0) == -1)
+                perror("dup2");
+            if(dup2(from_fds[1], 1) == -1)
+                perror("dup2");
+            if(dup2(from_fds[1], 2) == -1)
+                perror("dup2");
+            execl("/bin/bash", "bash", "-i", 0);
+        }
+
+        pass_key = true;
     }
 
     while(!quit) {
+        if(test_with_subprocess) {
+            unsigned char buf[1];
+
+            ssize_t r = read(pipe_from_subprocess, buf, sizeof(buf));
+            if (r == -1 && errno == EAGAIN) {
+                // no data yet
+            } else if (r > 0) {
+                if(buf[0] == '\n') {
+                    screen_print_char('\r');
+                    screen_print_char('\n');
+                } else 
+                    screen_print_char(buf[0]);
+            } else
+                break;
+        }
+
         rfbProcessEvents(rfb_server, 1000);
     }
 }
