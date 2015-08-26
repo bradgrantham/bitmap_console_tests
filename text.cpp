@@ -342,6 +342,9 @@ int main(int argc, char **argv)
     if(test_with_subprocess) {
         int to_fds[2];
         int from_fds[2];
+
+	// XXX This is not the right way to do this.  I should
+	// allocate a PTY and use it as my pipe from the child.
         int result = pipe(to_fds);
         result = pipe(from_fds);
         pipe_to_subprocess = to_fds[1];
