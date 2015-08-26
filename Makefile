@@ -1,7 +1,7 @@
 .PHONY: all
 OPT=-O2
 LDFLAGS=-L/opt/local/lib -lvncserver
-CXXFLAGS=-I/opt/local/include -std=c++11 $(OPT)
+CXXFLAGS=-Wall -I/opt/local/include -std=c++11 $(OPT)
 
 all: text
 
