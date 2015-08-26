@@ -11,7 +11,7 @@ maybe tie into CP/M emulator, make sure this supports least common denominator t
 
 From http://www.inwap.com/pdp10/ansicode.txt:
 
-'''
+```
 Minimum requirements for VT100 emulation:
 
 1) To act as a passive display, implement the 4 cursor commands, the 2 erase
@@ -81,4 +81,4 @@ Minimum requirements for VT100 emulation:
   Ow      SEVEN on keypad  sends ESC O w    "      "
   Ox      EIGHT on keypad  sends ESC O x    "      "
   Oy      NINE on keypad   sends ESC O y    "      "
-'''
+```
