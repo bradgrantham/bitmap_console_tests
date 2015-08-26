@@ -302,8 +302,6 @@ bool test_with_subprocess = true;
 
 int main(int argc, char **argv)
 {
-    int rfbargc = 0;
-    char **rgbargv = 0;
     rfb_server = rfbGetScreen(&argc, argv, screen_width * video_rfb_scale_x, screen_height * video_rfb_scale_y, 8, 3, 4);
     unsigned char* rfb_bytes = new unsigned char[screen_width * video_rfb_scale_x * screen_height * video_rfb_scale_y * 4];
     rfb_server->frameBuffer = (char *)rfb_bytes;
