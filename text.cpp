@@ -8,7 +8,7 @@
 extern int fontwidth, fontheight;
 extern unsigned char fontbits[];
 
-int screen_width_bytes = 62; // 31;
+int screen_width_bytes = 31; // 62;
 int screen_height = 262;
 int screen_byte_count = screen_width_bytes * screen_height;
 int screen_width = screen_width_bytes * 8;
@@ -27,7 +27,7 @@ unsigned char *screen_cursor_ptr;
 unsigned char *screen_textport_start_address;
 
 rfbScreenInfoPtr rfb_server;
-int video_rfb_scale_x = 1;
+int video_rfb_scale_x = 3;
 int video_rfb_scale_y = 2;
 bool quit;
 
@@ -707,7 +707,7 @@ unsigned char fontbits[] = {
 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
 0x00, };
 
-#elif 0
+#elif 1
 
 int fontwidth_bytes = 1, fontheight = 13;
 
