@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <errno.h>
 #include <rfb/rfb.h>
@@ -8,7 +9,7 @@
 extern int fontwidth, fontheight;
 extern unsigned char fontbits[];
 
-int screen_width_bytes = 31; // 62;
+int screen_width_bytes = 62; // 22; // 31;
 int screen_height = 262;
 int screen_byte_count = screen_width_bytes * screen_height;
 int screen_width = screen_width_bytes * 8;
@@ -27,7 +28,7 @@ unsigned char *screen_cursor_ptr;
 unsigned char *screen_textport_start_address;
 
 rfbScreenInfoPtr rfb_server;
-int video_rfb_scale_x = 3;
+int video_rfb_scale_x = 2;
 int video_rfb_scale_y = 2;
 bool quit;
 
@@ -251,25 +252,38 @@ void screen_print_string(unsigned char *str)
 
 bool pass_key = false;
 int pipe_to_subprocess = -1;
+bool control_down = false;
 
 void handleKey(rfbBool down, rfbKeySym key, rfbClientPtr cl)
 {
     if(down) {
-        if(key==XK_Escape) {
-            rfbCloseClient(cl);
-            quit = true;
-        } else if(key==XK_F12) {
+        if(key == XK_Control_L || key == XK_Control_R) {
+            control_down = true;
+        } else if(key == XK_Escape) {
+            if(pass_key) {
+                key = '';
+                write(pipe_to_subprocess, &key, 1);
+            }
+        } else if(key == XK_F12) {
             /* close down server, disconnecting clients */
             rfbShutdownServer(cl->screen,TRUE);
             quit = true;
-        } else if(key==XK_F11) {
+        } else if(key == XK_F11) {
             /* close down server, but wait for all clients to disconnect */
             rfbShutdownServer(cl->screen,FALSE);
             quit = true;
-        } else if(key==XK_F11) {
+        } else if(key == XK_F11) {
             /* close down server, but wait for all clients to disconnect */
             rfbShutdownServer(cl->screen,FALSE);
             quit = true;
+        } else if(control_down && key >= 'a' && key <= 'z') {
+            key = key - 96;
+            if(pass_key)
+                write(pipe_to_subprocess, &key, 1);
+        } else if(control_down && key >= 'A' && key <= '_') {
+            key = key - 64;
+            if(pass_key)
+                write(pipe_to_subprocess, &key, 1);
         } else if(key >= ' ' && key <= '~') {
             if(pass_key)
                 write(pipe_to_subprocess, &key, 1);
@@ -295,13 +309,36 @@ void handleKey(rfbBool down, rfbKeySym key, rfbClientPtr cl)
             }
         } else
             printf("rfb key 0x%04X\n", key);
+    } else {
+        if(key == XK_Control_L || key == XK_Control_R) {
+            control_down = false;
+        }
     }
 }
 
 bool test_with_subprocess = true;
 
+char *execargv[20];
+int execargc;
+
+
 int main(int argc, char **argv)
 {
+    if((argc > 1) && (strcmp(argv[1], "-c") == 0)) {
+        char **ap;
+        char *p = argv[2];
+        for (ap = execargv; (*ap = strsep(&p, " ")) != NULL;)
+            if (**ap != '\0')
+                if (++ap >= &execargv[10])
+                    break;
+        *ap = 0;
+        execargc = ap - execargv;
+    } else {
+        execargv[0] = strdup("/bin/bash");
+        execargv[1] = strdup("bash");
+        execargv[2] = strdup("-i");
+        execargv[3] = 0;
+    }
     rfb_server = rfbGetScreen(&argc, argv, screen_width * video_rfb_scale_x, screen_height * video_rfb_scale_y, 8, 3, 4);
     unsigned char* rfb_bytes = new unsigned char[screen_width * video_rfb_scale_x * screen_height * video_rfb_scale_y * 4];
     rfb_server->frameBuffer = (char *)rfb_bytes;
@@ -358,7 +395,11 @@ int main(int argc, char **argv)
                 perror("dup2");
             if(dup2(from_fds[1], 2) == -1)
                 perror("dup2");
-            execl("/bin/bash", "bash", "-i", 0);
+                printf("%s %s %s\n", execargv[0], execargv[1], execargv[2]);
+            if(execv(execargv[0], execargv) == -1) {
+                perror("execv");
+                exit(EXIT_FAILURE);
+            }
         }
 
         pass_key = true;
