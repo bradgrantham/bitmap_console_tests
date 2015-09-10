@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 #include <fcntl.h>
 #include <errno.h>
 #include <rfb/rfb.h>
@@ -38,13 +39,50 @@ int textport_leftcolumn_bit = textport_left_margin_pixels % 8;
 int textport_righcolumn_bit = (textport_left_margin_pixels + (textport_columns - 1) * fontwidth) % 8;
 
 rfbScreenInfoPtr rfb_server;
-int video_rfb_scale_x = 1;
+int video_rfb_scale_x = 2;
 int video_rfb_scale_y = 2;
 bool quit;
 
 uint32_t rfb_pixel(int  r, int g, int b)
 {
     return (r << 16) | (g << 8) | (b);
+}
+
+int modified_minx;
+int modified_miny;
+int modified_maxx;
+int modified_maxy;
+
+void rfb_reset_modified_rect()
+{
+    modified_minx = 10000;
+    modified_miny = 10000;
+    modified_maxx = 0;
+    modified_maxy = 0;
+}
+
+void rfb_send_modified_rect()
+{
+    if((modified_maxx - modified_minx > 0) && (modified_maxy - modified_miny > 0)) {
+        rfbMarkRectAsModified(rfb_server, modified_minx, modified_miny, modified_maxx, modified_maxy);
+        rfb_reset_modified_rect();
+    }
+}
+
+void rfb_add_modified_point(int x, int y)
+{
+    modified_minx = std::min(modified_minx, x);
+    modified_miny = std::min(modified_miny, y);
+    modified_maxx = std::max(modified_maxx, x + 1);
+    modified_maxy = std::max(modified_maxy, y + 1);
+}
+
+void rfb_add_modified_rect(int minx, int miny, int maxx, int maxy)
+{
+    modified_minx = std::min(modified_minx, minx);
+    modified_miny = std::min(modified_miny, miny);
+    modified_maxx = std::max(modified_maxx, maxx);
+    modified_maxy = std::max(modified_maxy, maxy);
 }
 
 void rfb_set_pixel_from_video(int video_x, int video_y, bool set)
@@ -55,7 +93,11 @@ void rfb_set_pixel_from_video(int video_x, int video_y, bool set)
 
     for(int j = 0; j < video_rfb_scale_y; j++)
         for(int i = 0; i < video_rfb_scale_x; i++) {
-            rfbDrawPixel(rfb_server, rfb_x + i, rfb_y + j, rfb_pixel(v, v, v));
+            unsigned char *fb = (unsigned char *)rfb_server->frameBuffer + ((rfb_y + j) * rfb_server->width + rfb_x + i) * 4;
+            fb[0] = v;
+            fb[1] = v;
+            fb[2] = v;
+            rfb_add_modified_point(rfb_x + i, rfb_y + j);
         }
 }
 
@@ -82,7 +124,7 @@ void rfb_fill_from_video()
             }
         }
     }
-    rfbMarkRectAsModified(rfb_server, 0, 0, rfb_server->width, rfb_server->height);
+    rfb_add_modified_rect(0, 0, rfb_server->width, rfb_server->height);
 }
 
 void update_rfb_from_screen_byte(unsigned char* p)
@@ -453,7 +495,10 @@ void test()
 
 int main(int argc, char **argv)
 {
+    rfb_reset_modified_rect();
+
     // test(); exit(0);
+
     if((argc > 1) && (strcmp(argv[1], "-c") == 0)) {
         char **ap;
         char *p = argv[2];
@@ -563,21 +608,24 @@ int main(int argc, char **argv)
 
     while(!quit) {
         if(test_with_subprocess) {
-            unsigned char buf[1];
+            unsigned char buf[16];
 
             ssize_t r = read(pipe_from_subprocess, buf, sizeof(buf));
             if (r == -1 && errno == EAGAIN) {
                 // no data yet
             } else if (r > 0) {
-                if(buf[0] == '\n') {
-                    screen_print_char('\r');
-                    screen_print_char('\n');
-                } else 
-                    screen_print_char(buf[0]);
+                for(ssize_t i = 0; i < r; i++) {
+                    if(buf[i] == '\n') {
+                        screen_print_char('\r');
+                        screen_print_char('\n');
+                    } else 
+                        screen_print_char(buf[i]);
+                }
             } else
                 break;
         }
 
+        rfb_send_modified_rect();
         rfbProcessEvents(rfb_server, 1000);
     }
 }
