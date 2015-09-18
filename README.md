@@ -6,6 +6,7 @@ with a bitmap display.  The bitmap display has 61 bytes per row and
 are customizable.  The bitmap is exported as a VNC server.
 
 Run it like this:
+
     ./text
 
 The default command the test program runs is bash.  I use it to telnet
@@ -15,7 +16,9 @@ does telnet.  But they work well enough for me to test CP/M programs.
 
 One may provide libvncserver command-line options, such as "-rfbport
 PORT".  One may also provide a space-delimited command to run, like
+
     "-c 'exe arg0 arg1 arg2'"
+
 These are in the form of parameters to execv, so the first part of the
 command is the executable name, e.g. /bin/bash, and then the other parts
 are argv, e.g. "bash" and then "-i".
@@ -26,14 +29,11 @@ Handles
 
 _To Do_
 
-variable width fonts up to 16 wide
-* 6-pixel-wide font is the only way Alice2 can display 80 columns, and that will require MAX video mode
+* "hanging cursor" mode on end-of-line
+* use #defines and not ints, more suited to Z80 assembly
+* maybe tie into CP/M emulator, make sure this supports least common denominator terminal codes
 
-basic vt100 sequences
 
-use #defines and not ints
-
-maybe tie into CP/M emulator, make sure this supports least common denominator terminal codes
 
 From http://www.inwap.com/pdp10/ansicode.txt:
 
