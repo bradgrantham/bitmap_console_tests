@@ -8,6 +8,8 @@ are customizable.  The bitmap is exported as a VNC server.
 Run it like this:
 
     ./text
+    
+Then connect using a VNC viewer, like xtightvnc or Chicken of the VNC.
 
 The default command the test program runs is bash.  I use it to telnet
 into an emulator for the machine in question.  This test isn't smart
