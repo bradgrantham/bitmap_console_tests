@@ -101,13 +101,13 @@ int main()
 {
     printf("int fontwidth = 5, fontheight = 7;\n");
     printf("unsigned char fontmask = 0xfc;\n");
-    printf("int fontoffset = 20;\n");
+    printf("int fontoffset = 32;\n");
     printf("\n");
     printf("unsigned char fontbytes[] = {\n");
 
     for(int c = 0; c < 94; c++) {
         printf("    ");
-        for(int row = 1; row < 7; row ++) {
+        for(int row = 1; row < 8; row ++) {
             unsigned char b = 0;
             for(int column = 0; column < 5; column ++) {
                 b |= (font_bytes[c][column] & (1 << row)) ? (0x80 >> column) : 0;
@@ -125,7 +125,7 @@ int main()
             );
             printf("0x%02X, ", b);
         }
-        printf("0x00,\n");
+        printf("\n");
     }
     printf("};\n");
 }
