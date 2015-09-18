@@ -1,3 +1,29 @@
+# Monochrome bitmap terminal code
+
+I wrote this as a C++ test of a terminal framework for a CP/M machine
+with a bitmap display.  The bitmap display has 61 bytes per row and
+262 rows and handles definitions for a "safe" area (margin), but these
+are customizable.  The bitmap is exported as a VNC server.
+
+Run it like this:
+    ./text
+
+The default command the test program runs is bash.  I use it to telnet
+into an emulator for the machine in question.  This test isn't smart
+enough to allocate a PTY, so bash doesn't work really well, and neither
+does telnet.  But they work well enough for me to test CP/M programs.
+
+One may provide libvncserver command-line options, such as "-rfbport
+PORT".  One may also provide a space-delimited command to run, like
+    "-c 'exe arg0 arg1 arg2'"
+These are in the form of parameters to execv, so the first part of the
+command is the executable name, e.g. /bin/bash, and then the other parts
+are argv, e.g. "bash" and then "-i".
+
+Handles
+* fonts up to 8 pixels wide
+* A subset of VT102 *almost* capable of handling WordStar 3.3's "VT100" terminal as long as the screen width and height are set correctly
+
 _To Do_
 
 variable width fonts up to 16 wide
