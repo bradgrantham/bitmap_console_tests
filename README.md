@@ -17,7 +17,7 @@ does telnet.  But they work well enough for me to test CP/M programs.
 One may provide libvncserver command-line options, such as "-rfbport
 PORT".  One may also provide a space-delimited command to run, like
 
-    "-c 'exe arg0 arg1 arg2'"
+    -c 'exe arg0 arg1 arg2'
 
 These are in the form of parameters to execv, so the first part of the
 command is the executable name, e.g. /bin/bash, and then the other parts
