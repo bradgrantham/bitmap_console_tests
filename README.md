@@ -27,11 +27,10 @@ are argv, e.g. "bash" and then "-i".
 
 Handles
 * fonts up to 8 pixels wide
-* A subset of VT102 *almost* capable of handling WordStar 3.3's "VT100" terminal as long as the screen width and height are set correctly
+* A subset of VT102 capable of handling WordStar 3.3's "VT100" terminal as long as WordStar's screen width and height are set correctly on installation
 
 _To Do_
 
-* "hanging cursor" mode on end-of-line
 * use #defines and not ints, more suited to Z80 assembly
 * maybe tie into CP/M emulator, make sure this supports least common denominator terminal codes
 

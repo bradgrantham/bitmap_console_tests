@@ -31,37 +31,13 @@ int cursor_x;
 int cursor_y;
 unsigned char *cursor_ptr;
 int cursor_bit;
+bool cursor_hanging = 0;
 
 unsigned char *textport_start_ptr;
 int textport_start_bit;
 int textport_hanging_cursor = 0;
 int textport_leftcolumn_bit = textport_left_margin_pixels % 8;
 int textport_righcolumn_bit = (textport_left_margin_pixels + (textport_columns - 1) * fontwidth) % 8;
-
-/*
-hanging cursor:
-
-when cursor is at the last column and moved forward, mark hanging and don't increment cursor
-when anything would happen that uses the cursor position when hanging, clear hanging, increment cursor (including scroll if necessary), then increment it again:
-    textport_draw_character
-    don't draw ' ' in textport_character
-    textport_line_down??
-clear hanging:
-    textport_set_cursor
-    screen_cursor_rewind
-    textport_carriage_return
-save cursor?  restore cursor?
-    save hanging state, too?
-textport_invert_at_cursor: let that use "hanging" cursor position
-
-cursor_forward:
-    if(hanging)
-	hanging = 0;
-	cursor at 
-    else if(x == last column)
-	hanging = 1;
-	
-*/
 
 rfbScreenInfoPtr rfb_server;
 bool rfb_initialized = false;
@@ -175,6 +151,7 @@ void update_rfb_from_screen_byte(unsigned char* p)
 
 void textport_set_cursor(int x, int y)
 {
+    cursor_hanging = false;
     if(y < 0) {
         x = 0; y = 0;
     } else if(y >= textport_rows) {
@@ -195,16 +172,92 @@ void textport_set_cursor(int x, int y)
 
 int saved_cursor_x;
 int saved_cursor_y;
+int saved_cursor_hanging;
 
 void save_cursor() 
 {
     saved_cursor_x = cursor_x;
     saved_cursor_y = cursor_y;
+    saved_cursor_hanging = cursor_hanging;
 }
 
 void restore_cursor() 
 {
     textport_set_cursor(saved_cursor_x, saved_cursor_y);
+    cursor_hanging = saved_cursor_hanging;
+}
+
+void screen_scroll_one_row()
+{
+    unsigned char *screen_ptr = textport_start_ptr;
+    unsigned char *next_row_ptr = textport_start_ptr + screen_width_bytes * fontheight;
+
+    for(int i = (textport_rows - 1) * screen_width_bytes * fontheight; i > 0; i--) {
+        *screen_ptr++ = *next_row_ptr++;
+    }
+    for(int i = screen_width_bytes * fontheight; i > 0; i--) {
+        *screen_ptr++ = 0;
+    }
+    rfb_fill_from_video();
+}
+
+void get_byte_masks(int screen_bit, unsigned char& mask1, unsigned char& mask2, int& do_byte2)
+{
+    mask1 = fontmask;
+    for(int bit = screen_bit; bit > 0; bit--) {
+        // convert to Z80 assembly:
+        mask1 >>= 1U;
+    }
+
+    mask2 = fontmask;
+    for(int bit = 8 - screen_bit; bit > 0; bit--) {
+        // convert to Z80 assembly:
+        mask2 <<= 1U;
+    }
+    
+    do_byte2 = (screen_bit + fontwidth) > 8;
+}
+
+void textport_invert_at_cursor()
+{
+    unsigned char *screen_ptr = cursor_ptr;
+    int screen_bit = cursor_bit;
+
+    unsigned char mask1, mask2;
+    int do_byte2;
+    get_byte_masks(screen_bit, mask1, mask2, do_byte2);
+
+    for(int row = fontheight; row != 0; row--) {
+        unsigned char pixels = *screen_ptr;
+        pixels ^= mask1;
+        *screen_ptr = pixels;
+        update_rfb_from_screen_byte(screen_ptr);
+
+        screen_ptr ++;
+
+        if(do_byte2) {
+            pixels = *screen_ptr;
+            pixels ^= mask2;
+            *screen_ptr = pixels;
+            update_rfb_from_screen_byte(screen_ptr);
+        }
+
+        screen_ptr += screen_width_bytes - 1;
+    }
+}
+
+
+void process_hanging_cursor()
+{
+    cursor_hanging = false;
+    textport_invert_at_cursor();
+    cursor_x = 0;
+    cursor_y++;
+    if(cursor_y >= textport_rows) {
+	screen_scroll_one_row();
+	cursor_y--;
+    }
+    textport_set_cursor(cursor_x, cursor_y);
 }
 
 void screen_init()
@@ -226,26 +279,12 @@ void screen_clear()
 int text_flag_none = 0x00;
 int text_flag_inverse = 0x01;
 
-void get_byte_masks(int screen_bit, unsigned char& mask1, unsigned char& mask2, int& do_byte2)
-{
-    mask1 = fontmask;
-    for(int bit = screen_bit; bit > 0; bit--) {
-        // convert to Z80 assembly:
-        mask1 >>= 1U;
-    }
-
-    mask2 = fontmask;
-    for(int bit = 8 - screen_bit; bit > 0; bit--) {
-        // convert to Z80 assembly:
-        mask2 <<= 1U;
-    }
-    
-    do_byte2 = (screen_bit + fontwidth) > 8;
-}
-
 
 void textport_draw_character(unsigned char c, int flags)
 {
+    if(cursor_hanging)
+	process_hanging_cursor();
+
     unsigned char *screen_ptr = cursor_ptr;
     int screen_bit = cursor_bit;
 
@@ -305,50 +344,10 @@ void textport_draw_character(unsigned char c, int flags)
     }
 }
 
-void textport_invert_at_cursor()
-{
-    unsigned char *screen_ptr = cursor_ptr;
-    int screen_bit = cursor_bit;
-
-    unsigned char mask1, mask2;
-    int do_byte2;
-    get_byte_masks(screen_bit, mask1, mask2, do_byte2);
-
-    for(int row = fontheight; row != 0; row--) {
-        unsigned char pixels = *screen_ptr;
-        pixels ^= mask1;
-        *screen_ptr = pixels;
-        update_rfb_from_screen_byte(screen_ptr);
-
-        screen_ptr ++;
-
-        if(do_byte2) {
-            pixels = *screen_ptr;
-            pixels ^= mask2;
-            *screen_ptr = pixels;
-            update_rfb_from_screen_byte(screen_ptr);
-        }
-
-        screen_ptr += screen_width_bytes - 1;
-    }
-}
-
-void screen_scroll_one_row()
-{
-    unsigned char *screen_ptr = textport_start_ptr;
-    unsigned char *next_row_ptr = textport_start_ptr + screen_width_bytes * fontheight;
-
-    for(int i = (textport_rows - 1) * screen_width_bytes * fontheight; i > 0; i--) {
-        *screen_ptr++ = *next_row_ptr++;
-    }
-    for(int i = screen_width_bytes * fontheight; i > 0; i--) {
-        *screen_ptr++ = 0;
-    }
-    rfb_fill_from_video();
-}
-
 void screen_cursor_rewind()
 {
+    // XXX cursor_hanging
+    cursor_hanging = false;
     if(cursor_x == 0) {
         if(cursor_y == 0) {
             return;
@@ -369,21 +368,20 @@ void screen_cursor_rewind()
 
 void screen_cursor_forward()
 {
+    if(cursor_hanging)
+	process_hanging_cursor();
+
     // printf("%d, %d, %ld\n", cursor_x, cursor_y, cursor_ptr - screen);
-    cursor_x ++;
-    cursor_bit += fontwidth;
-    if(cursor_bit > 7) {
-        cursor_bit -= 8;
-        cursor_ptr ++;
-    }
-    if(cursor_x >= textport_columns) {
-        cursor_x = 0;
-        cursor_y++;
-        if(cursor_y >= textport_rows) {
-            screen_scroll_one_row();
-            cursor_y--;
-        }
-        textport_set_cursor(cursor_x, cursor_y);
+
+    if(cursor_x == textport_columns - 1) {
+        cursor_hanging = 1;
+    } else {
+	cursor_x ++;
+	cursor_bit += fontwidth;
+	if(cursor_bit > 7) {
+	    cursor_bit -= 8;
+	    cursor_ptr ++;
+	}
     }
 }
 
@@ -458,6 +456,8 @@ void textport_line_up()
 
 void textport_line_down()
 {
+    if(cursor_hanging)
+	process_hanging_cursor();
     cursor_y++;
     cursor_ptr += screen_width_bytes * fontheight;
     if(cursor_y >= textport_rows) {
@@ -469,6 +469,8 @@ void textport_line_down()
 
 void textport_carriage_return()
 {
+    if(cursor_hanging)
+	process_hanging_cursor();
     cursor_x = 0;
     textport_set_cursor(cursor_x, cursor_y);
 }
@@ -1129,9 +1131,6 @@ int main(int argc, char **argv)
         int cursor = 0;
         for(int i = 0; i < 2; i++) {
             for(int c = 0x20; c <= 0x7e; c++) {
-                // int y = cursor / textport_columns;
-                // int x = cursor - y * textport_columns;
-                // fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
                 textport_draw_character(c, text_flag_none);
                 if(c % 0x08 == 0)
                     textport_invert_at_cursor();
@@ -1139,9 +1138,6 @@ int main(int argc, char **argv)
                 cursor++;
             }
             for(int c = 0x20; c <= 0x7e; c++) {
-                // int y = cursor / textport_columns;
-                // int x = cursor - y * textport_columns;
-                // fprintf(stderr, "0x%02X at %d, %d\n", c, x, y);
                 textport_draw_character(c, text_flag_inverse);
                 if(c % 0x08 == 0)
                     textport_invert_at_cursor();
@@ -1149,7 +1145,6 @@ int main(int argc, char **argv)
                 cursor++;
             }
         }
-        // Selftest
         textport_set_cursor(1, 0);
         cursor = 0;
         for(int i = 0; i < 2; i++) {
