@@ -5,6 +5,8 @@ with a bitmap display.  The bitmap display has 61 bytes per row and
 262 rows and handles definitions for a "safe" area (margin), but these
 are customizable.  The bitmap is exported as a VNC server.
 
+![WordStar(tm)](https://raw.githubusercontent.com/bradgrantham/bitmap_console_tests/master/ws33.png)
+
 Run it like this:
 
     ./text
