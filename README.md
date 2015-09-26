@@ -34,7 +34,7 @@ _To Do_
 * use #defines and not ints, more suited to Z80 assembly
 * maybe tie into CP/M emulator, make sure this supports least common denominator terminal codes
 
-
+Borrows some code in body and some structure from https://github.com/bradgrantham/dt
 
 From http://www.inwap.com/pdp10/ansicode.txt:
 
